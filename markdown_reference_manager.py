@@ -7,114 +7,77 @@ from collections import defaultdict
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTreeWidget, QTreeWidgetItem, QMessageBox, QLabel,
-    QFileDialog, QDialog, QComboBox, QDialogButtonBox
+    QFileDialog, QDialog, QComboBox, QDialogButtonBox, QLineEdit
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor, QPalette
+from PyQt5.QtWidgets import QHeaderView
 
-
-# Lista de stopwords em Português e Inglês, incluindo artigos, pronomes, adjetivos, verbos, números, numerais
-STOPWORDS = {
-    # Artigos em Português
-    'a', 'à', 'as', 'ao', 'aos', 'um', 'uma', 'uns', 'umas',
-    'o', 'os', 'da', 'das', 'do', 'dos', 'de', 'em', 'para',
-    'por', 'com', 'sem', 'sobre', 'entre', 'até', 'desde',
-    'pela', 'pelas', 'pelo', 'pelos',
-
-    # Artigos em Inglês
-    'a', 'an', 'the',
-
-    # Pronomes em Português
-    'eu', 'tu', 'ele', 'ela', 'nós', 'vós', 'eles', 'elas',
-    'me', 'te', 'se', 'nos', 'vos', 'lhe', 'lhes',
-    'este', 'esta', 'estes', 'estas', 'esse', 'essa', 'esses', 'essas',
-    'aquele', 'aquela', 'aqueles', 'aquelas',
-
-    # Pronomes em Inglês
-    'i', 'you', 'he', 'she', 'it', 'we', 'they',
-    'me', 'him', 'her', 'us', 'them',
-    'this', 'that', 'these', 'those',
-
-    # Preposições e Conjunções em Português
-    'que', 'como', 'se', 'mais', 'menos', 'também', 'sempre',
-    'quando', 'onde', 'porque', 'para', 'com', 'sem', 'sobre',
-    'entre', 'até', 'desde',
-
-    # Preposições e Conjunções em Inglês
-    'and', 'or', 'but', 'because', 'as', 'until', 'while',
-    'of', 'at', 'by', 'for', 'with', 'about', 'against',
-    'between', 'into', 'through', 'during', 'before', 'after',
-
-    # Adjetivos Comuns em Português
-    'grande', 'pequeno', 'bom', 'ruim', 'novo', 'velho',
-    'primeiro', 'último', 'melhor', 'pior',
-
-    # Adjetivos Comuns em Inglês
-    'big', 'small', 'good', 'bad', 'new', 'old',
-    'first', 'last', 'better', 'worse',
-
-    # Verbos Comuns em Português
-    'ser', 'estar', 'ter', 'fazer', 'poder', 'dizer',
-    'ir', 'ver', 'dar', 'saber', 'querer', 'chegar',
-    'passar', 'dever', 'ficar', 'contar', 'começar',
-
-    # Verbos Comuns em Inglês
-    'be', 'have', 'do', 'say', 'go', 'see', 'get',
-    'make', 'know', 'think', 'take', 'come', 'want',
-    'look', 'use', 'find', 'give', 'tell', 'work',
-
-    # Números e Numerais em Português
-    'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete',
-    'oito', 'nove', 'dez', 'primeiro', 'segundo', 'terceiro',
-    'quarto', 'quinto',
-
-    # Números e Numerais em Inglês
-    'one', 'two', 'three', 'four', 'five', 'six', 'seven',
-    'eight', 'nine', 'ten', 'first', 'second', 'third',
-    'fourth', 'fifth',
-
-    # Preposição 'x' usada como 'versus' em Português
-    'x',
-}
 
 def remover_acentos(texto):
     """
-    Remove acentos de uma string.
+    Remove acentos de uma string e normaliza para minúsculas.
     """
     nfkd = unicodedata.normalize('NFKD', texto)
-    return ''.join([c for c in nfkd if not unicodedata.combining(c)])
+    return ''.join([c for c in nfkd if not unicodedata.combining(c)]).lower().strip()
 
-def extrair_referencias(line):
+
+def extrair_referencias(linha):
     """
     Extrai todas as referências dentro de colchetes duplos em uma linha.
-    Retorna uma lista de tuplas (exata_referencia, referencia_normalizada).
+    Retorna uma lista de tuplas (exact_ref, normalized_ref).
     """
-    matches = re.findall(r'\[\[(.*?)\]\]', line)
+    matches = re.findall(r'\[\[(.*?)\]\]', linha)
     referencias = []
     for match in matches:
         exact_ref = match.strip()
-        normalized_ref = remover_acentos(match.lower()).strip()
-        if normalized_ref and normalized_ref not in STOPWORDS:
+        normalized_ref = remover_acentos(match)
+        if exact_ref:
             referencias.append((exact_ref, normalized_ref))
     return referencias
+
+
+def agrupar_por_palavras_comuns(referencias):
+    """
+    Agrupa referências por palavras em comum, sem ignorar stopwords.
+    :param referencias: Dicionário {arquivo: [(linha, exact_text)]}.
+    :return: Dicionário {palavra_comum: [(arquivo, linha, exact_text)]}.
+    """
+    grupos = defaultdict(list)
+
+    for arquivo, ocorrencias in referencias.items():
+        for linha, exact_text in ocorrencias:
+            # Extrair todas as palavras (incluindo stopwords)
+            palavras = set(remover_acentos(exact_text).split())
+            for palavra in palavras:
+                grupos[palavra].append((arquivo, linha, exact_text))
+
+    # Filtrar grupos com textos distintos
+    grupos_filtrados = {
+        palavra: lista
+        for palavra, lista in grupos.items()
+        if len({oc[2] for oc in lista}) > 1  # Verifica se há textos diferentes
+    }
+
+    return grupos_filtrados
+
 
 # Dicionário de traduções para as duas línguas suportadas
 LANGUAGES = {
     'english': {
         'window_title': "Markdown Reference Manager",
-        'instruction': "Select the files you want to analyze.",
+        'instruction': "Select the directory containing your .md files.",
         'button_delete': "Delete",
         'button_undo': "Undo",
         'button_merge': "Rewrite",
-        'button_save': "Save Changes",
         'feedback_deleted': "Deleted references: {files}",
         'feedback_merged': "Rewrote references to: {filename}",
         'feedback_undone': "Action undone: {action}",
-        'error_no_files_selected': "No files selected.",
+        'error_no_files_selected': "No directory selected.",
         'error_merge_failed': "Error rewriting references: {error}",
         'error_delete_failed': "Error deleting references: {error}",
         'merge_dialog_title': "New Reference Name",
-        'merge_dialog_instruction': "Select a suggested name or enter a new name for the reference:",
+        'merge_dialog_instruction': "Enter the new name for the selected references:",
         'merge_dialog_ok': "OK",
         'merge_dialog_cancel': "Cancel",
         'warning_no_files_selected_delete': "No references selected to delete.",
@@ -124,10 +87,6 @@ LANGUAGES = {
         'language_selection_instruction': "Choose the application language:",
         'language_english': "English",
         'language_portuguese': "Portuguese (Brazilian)",
-        'select_rewrite_action': "Choose an action for the selected reference:",
-        'action_rewrite': "Rewrite",
-        'action_delete': "Delete",
-        'action_skip': "Skip",
         'close_confirmation_title': "Quit",
         'close_confirmation_question': "Are you sure you want to quit?",
         'close_confirmation_yes': "Yes",
@@ -135,19 +94,18 @@ LANGUAGES = {
     },
     'portuguese': {
         'window_title': "Gerenciador de Referências de Markdown",
-        'instruction': "Selecione os arquivos que deseja analisar.",
+        'instruction': "Selecione a pasta contendo seus arquivos .md.",
         'button_delete': "Apagar",
         'button_undo': "Desfazer",
         'button_merge': "Reescrever",
-        'button_save': "Salvar Alterações",
         'feedback_deleted': "Referências apagadas: {files}",
         'feedback_merged': "Referências reescritas para: {filename}",
         'feedback_undone': "Ação desfeita: {action}",
-        'error_no_files_selected': "Nenhum arquivo selecionado.",
+        'error_no_files_selected': "Nenhuma pasta selecionada.",
         'error_merge_failed': "Erro ao reescrever referências: {error}",
         'error_delete_failed': "Erro ao apagar referências: {error}",
         'merge_dialog_title': "Novo Nome da Referência",
-        'merge_dialog_instruction': "Selecione um nome sugerido ou digite um novo nome para a referência:",
+        'merge_dialog_instruction': "Digite o novo nome para as referências selecionadas:",
         'merge_dialog_ok': "OK",
         'merge_dialog_cancel': "Cancelar",
         'warning_no_files_selected_delete': "Nenhuma referência selecionada para apagar.",
@@ -157,10 +115,6 @@ LANGUAGES = {
         'language_selection_instruction': "Escolha o idioma do aplicativo:",
         'language_english': "Inglês",
         'language_portuguese': "Português (Brasil)",
-        'select_rewrite_action': "Escolha uma ação para a referência selecionada:",
-        'action_rewrite': "Reescrever",
-        'action_delete': "Apagar",
-        'action_skip': "Ignorar",
         'close_confirmation_title': "Sair",
         'close_confirmation_question': "Tem certeza de que deseja sair?",
         'close_confirmation_yes': "Sim",
@@ -168,34 +122,35 @@ LANGUAGES = {
     }
 }
 
+
 class LanguageSelectionDialog(QDialog):
     """
-    Dialog for selecting the application language at startup.
+    Dialog para selecionar o idioma do aplicativo no início.
     """
     def __init__(self, translations, parent=None):
         super().__init__(parent)
         self.translations = translations
         self.setWindowTitle(self.translations['language_selection_title'])
         self.setModal(True)
-        self.selected_language = 'english'  # Default
+        self.selected_language = 'english'  # Padrão
         self.initUI()
 
     def initUI(self):
         layout = QVBoxLayout()
 
-        # Instruction Label
+        # Label de instrução
         instruction = QLabel(self.translations['language_selection_instruction'])
         instruction.setFont(QFont("Arial", 12))
         layout.addWidget(instruction)
 
-        # Language ComboBox
+        # ComboBox para seleção de idioma
         self.combo_languages = QComboBox()
         self.combo_languages.addItem(self.translations['language_english'], 'english')
         self.combo_languages.addItem(self.translations['language_portuguese'], 'portuguese')
-        self.combo_languages.setCurrentIndex(0)  # Default to English
+        self.combo_languages.setCurrentIndex(0)  # Padrão para inglês
         layout.addWidget(self.combo_languages)
 
-        # OK and Cancel Buttons
+        # Botões OK e Cancelar
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -206,9 +161,10 @@ class LanguageSelectionDialog(QDialog):
     def get_selected_language(self):
         return self.combo_languages.currentData()
 
+
 class NameSuggestionDialog(QDialog):
     """
-    Dialog for suggesting and inputting new reference names.
+    Dialog para sugerir e inserir novos nomes de referência.
     """
     def __init__(self, suggested_names, translations, parent=None):
         super().__init__(parent)
@@ -221,18 +177,17 @@ class NameSuggestionDialog(QDialog):
     def initUI(self):
         layout = QVBoxLayout()
 
-        # Instruction Label
+        # Label de instrução
         instruction = QLabel(self.translations['merge_dialog_instruction'])
         instruction.setFont(QFont("Arial", 12))
         layout.addWidget(instruction)
 
-        # ComboBox with Suggestions
-        self.combo_suggestions = QComboBox()
-        self.combo_suggestions.addItems(self.suggested_names)
-        self.combo_suggestions.setEditable(True)
-        layout.addWidget(self.combo_suggestions)
+        # Campo de texto para inserir o novo nome
+        self.input_new_name = QLineEdit()
+        self.input_new_name.setText(self.suggested_names[0] if self.suggested_names else "")
+        layout.addWidget(self.input_new_name)
 
-        # OK and Cancel Buttons
+        # Botões OK e Cancelar
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText(self.translations['merge_dialog_ok'])
         buttons.button(QDialogButtonBox.Cancel).setText(self.translations['merge_dialog_cancel'])
@@ -243,45 +198,49 @@ class NameSuggestionDialog(QDialog):
         self.setLayout(layout)
 
     def get_new_name(self):
-        return self.combo_suggestions.currentText().strip()
+        return self.input_new_name.text().strip()
+
 
 class MarkdownReferenceManager(QWidget):
     def __init__(self, translations):
         super().__init__()
         self.translations = translations
         self.setWindowTitle(self.translations['window_title'])
-        self.setGeometry(100, 100, 1600, 900)  # Increased width for more columns
-        self.action_history = []  # History for undo functionality
+        self.setGeometry(100, 100, 1200, 800)  # Ajustado para melhor visualização
+        self.action_history = []  # Histórico para funcionalidade de desfazer
         self.initUI()
 
     def initUI(self):
-        # Apply dark theme
+        # Aplicar tema escuro
         self.apply_dark_theme()
 
         layout = QVBoxLayout()
 
-        # Instruction Label
+        # Label de instrução
         instruction = QLabel(self.translations['instruction'])
         instruction.setFont(QFont("Arial", 14))
         instruction.setStyleSheet("color: white;")
         layout.addWidget(instruction)
 
-        # Tree Widget to Display References
+        # Tree Widget para exibir referências
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Freq.", "Reference", "File", "Line", "Exact Text"])
-        self.tree.setColumnWidth(0, 50)    # Frequency
-        self.tree.setColumnWidth(1, 300)   # Reference
-        self.tree.setColumnWidth(2, 200)   # File
-        self.tree.setColumnWidth(3, 100)   # Line
-        self.tree.setColumnWidth(4, 800)   # Exact Text
+        self.tree.setHeaderLabels(["Freq.", "Common Word", "File", "Line", "Exact Text"])
+        self.tree.setColumnWidth(0, 50)    # Frequência
+        self.tree.setColumnWidth(1, 300)   # Palavra Comum
+        self.tree.setColumnWidth(2, 200)   # Arquivo
+        self.tree.setColumnWidth(3, 100)   # Linha
+        self.tree.setColumnWidth(4, 700)   # Texto Exato
         self.tree.setStyleSheet("background-color: #2b2b2b; color: white;")
         self.tree.setSelectionMode(QTreeWidget.NoSelection)
         self.tree.setAlternatingRowColors(True)
-        self.tree.setRootIsDecorated(True)  # Show expand arrows
+        self.tree.setRootIsDecorated(False)  # Sem setas de expansão
+
+        # Ajustar cabeçalhos para ajustar ao conteúdo
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeToContents)
 
         layout.addWidget(self.tree)
 
-        # Action Buttons
+        # Botões de ação
         button_layout = QHBoxLayout()
 
         self.btn_delete = QPushButton(self.translations['button_delete'])
@@ -332,25 +291,26 @@ class MarkdownReferenceManager(QWidget):
         self.btn_merge.clicked.connect(self.rewrite_reference)
         button_layout.addWidget(self.btn_merge)
 
-        self.btn_save = QPushButton(self.translations['button_save'])
-        self.btn_save.setFont(QFont("Arial", 12, QFont.Bold))
-        self.btn_save.setStyleSheet("""
-            QPushButton {
-                background-color: #0275d8;
-                color: white;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #025aa5;
-            }
-        """)
-        self.btn_save.clicked.connect(self.save_changes)
-        button_layout.addWidget(self.btn_save)
+        # Remoção do botão "Save Changes"
+        # self.btn_save = QPushButton(self.translations['button_save'])
+        # self.btn_save.setFont(QFont("Arial", 12, QFont.Bold))
+        # self.btn_save.setStyleSheet("""
+        #     QPushButton {
+        #         background-color: #0275d8;
+        #         color: white;
+        #         padding: 10px;
+        #         border-radius: 5px;
+        #     }
+        #     QPushButton:hover {
+        #         background-color: #025aa5;
+        #     }
+        # """)
+        # self.btn_save.clicked.connect(self.save_changes)
+        # button_layout.addWidget(self.btn_save)
 
         layout.addLayout(button_layout)
 
-        # Feedback Label
+        # Label de feedback
         self.feedback = QLabel("")
         self.feedback.setFont(QFont("Arial", 12))
         self.feedback.setStyleSheet("color: #28a745;")
@@ -358,16 +318,16 @@ class MarkdownReferenceManager(QWidget):
 
         self.setLayout(layout)
 
-        # Load and Analyze Files
+        # Carregar e analisar arquivos
         self.load_and_analyze_files()
 
     def apply_dark_theme(self):
         """
-        Apply a dark theme to the application.
+        Aplica um tema escuro ao aplicativo.
         """
         dark_palette = QPalette()
 
-        # Define color palette
+        # Definir paleta de cores
         dark_palette.setColor(QPalette.Window, QColor(43, 43, 43))
         dark_palette.setColor(QPalette.WindowText, Qt.white)
         dark_palette.setColor(QPalette.Base, QColor(25, 25, 25))
@@ -389,9 +349,9 @@ class MarkdownReferenceManager(QWidget):
 
     def load_and_analyze_files(self):
         """
-        Prompt the user to select a directory and analyze .md files within it.
+        Solicita ao usuário que selecione um diretório e analisa os arquivos .md nele.
         """
-        # Open a dialog to select the directory
+        # Abrir diálogo para selecionar diretório
         if self.translations['language_english'] == "English":
             directory = QFileDialog.getExistingDirectory(self, "Select folder with .md files")
         else:
@@ -405,7 +365,7 @@ class MarkdownReferenceManager(QWidget):
             )
             sys.exit()
 
-        # List all .md files in the directory
+        # Listar todos os arquivos .md no diretório
         md_files = [f for f in os.listdir(directory) if f.lower().endswith('.md')]
 
         if not md_files:
@@ -416,8 +376,8 @@ class MarkdownReferenceManager(QWidget):
             )
             sys.exit()
 
-        # Analyze references across all files
-        self.references = defaultdict(list)  # Normalized Reference -> List of occurrences (exact_ref, file, line number)
+        # Analisar referências em todos os arquivos
+        self.references = defaultdict(list)  # {arquivo: [(linha, exact_text)]}
 
         for file in md_files:
             file_path = os.path.join(directory, file)
@@ -426,7 +386,7 @@ class MarkdownReferenceManager(QWidget):
                     for line_num, line in enumerate(f, start=1):
                         referencias = extrair_referencias(line)
                         for exact_ref, normalized_ref in referencias:
-                            self.references[normalized_ref].append((exact_ref, file, line_num))
+                            self.references[file].append((line_num, exact_ref))
             except Exception as e:
                 QMessageBox.critical(
                     self,
@@ -435,10 +395,10 @@ class MarkdownReferenceManager(QWidget):
                 )
                 sys.exit()
 
-        # Filter references that appear more than once
-        self.filtered_references = {ref: occurrences for ref, occurrences in self.references.items() if len(occurrences) > 1}
+        # Agrupar referências por palavras em comum
+        grupos_filtrados = agrupar_por_palavras_comuns(self.references)
 
-        if not self.filtered_references:
+        if not grupos_filtrados:
             QMessageBox.information(
                 self,
                 "Information" if self.translations['language_english'] == "English" else "Informação",
@@ -446,33 +406,43 @@ class MarkdownReferenceManager(QWidget):
             )
             sys.exit()
 
-        # Sort references by frequency (descending)
-        sorted_refs = sorted(self.filtered_references.items(), key=lambda x: len(x[1]), reverse=True)
+        # Ordenar grupos por frequência (decrescente)
+        sorted_groups = sorted(grupos_filtrados.items(), key=lambda x: len(x[1]), reverse=True)
 
-        # Populate the Tree Widget
-        for ref, occurrences in sorted_refs:
-            ref_item = QTreeWidgetItem([str(len(occurrences)), ref, "", "", ""])
-            ref_item.setFont(1, QFont("Arial", 12, QFont.Bold))
-            ref_item.setForeground(1, QColor(255, 255, 255))
-            for occ in occurrences:
-                exact_ref, file, line_num = occ
-                occurrence_item = QTreeWidgetItem(["", "", file, str(line_num), exact_ref])
-                occurrence_item.setCheckState(4, Qt.Unchecked)
-                ref_item.addChild(occurrence_item)
-            self.tree.addTopLevelItem(ref_item)
+        # Preencher o Tree Widget
+        for palavra, ocorrencias in sorted_groups:
+            # Cada grupo é baseado em uma palavra comum
+            freq = len(ocorrencias)
+            # Para exibir referências distintas, coletar textos únicos
+            refs_unicos = set([oc[2] for oc in ocorrencias])
+            ref_combined = ", ".join(refs_unicos)
+
+            group_item = QTreeWidgetItem([str(freq), palavra, "", "", ""])
+            group_item.setFont(1, QFont("Arial", 12, QFont.Bold))
+            group_item.setForeground(1, QColor(255, 255, 255))
+            group_item.setExpanded(False)  # Inicialmente colapsado
+
+            for oc in ocorrencias:
+                arquivo, linha, exact_text = oc
+                occurrence_item = QTreeWidgetItem(["", "", arquivo, str(linha), exact_text])
+                occurrence_item.setCheckState(4, Qt.Unchecked)  # Permitir seleção
+                group_item.addChild(occurrence_item)
+
+            self.tree.addTopLevelItem(group_item)
 
         self.directory = directory
 
     def delete_references(self):
         """
-        Delete selected references from all occurrences in all files.
+        Apaga as referências selecionadas de todas as ocorrências nos arquivos.
         """
         selected_refs = []
         for i in range(self.tree.topLevelItemCount()):
-            ref_item = self.tree.topLevelItem(i)
-            # Check if the reference or any of its occurrences are checked
-            if ref_item.checkState(0) == Qt.Checked or ref_item.checkState(1) == Qt.Checked:
-                selected_refs.append(ref_item.text(1))
+            group_item = self.tree.topLevelItem(i)
+            # Verifica se o grupo está selecionado
+            if group_item.checkState(0) == Qt.Checked or group_item.checkState(1) == Qt.Checked:
+                ref = group_item.text(1)
+                selected_refs.append(ref)
 
         if not selected_refs:
             QMessageBox.warning(
@@ -482,27 +452,39 @@ class MarkdownReferenceManager(QWidget):
             )
             return
 
-        # Backup original files
+        # Fazer backup dos arquivos originais
         backup_dir = os.path.join(self.directory, ".backup_reference_manager")
         os.makedirs(backup_dir, exist_ok=True)
 
         try:
             for ref in selected_refs:
-                occurrences = self.filtered_references[ref]
-                for exact_ref, file, line_num in occurrences:
-                    src = os.path.join(self.directory, file)
-                    backup_path = os.path.join(backup_dir, file)
-                    shutil.copy2(src, backup_path)  # Backup the file
+                # Encontrar todas as ocorrências desta referência
+                for i in range(self.tree.topLevelItemCount()):
+                    group_item = self.tree.topLevelItem(i)
+                    if group_item.text(1) == ref:
+                        # Iterar pelos itens filhos (ocorrências)
+                        for j in range(group_item.childCount()):
+                            occurrence_item = group_item.child(j)
+                            arquivo = occurrence_item.text(2)
+                            linha = int(occurrence_item.text(3))
+                            exact_text = occurrence_item.text(4)
 
-                    # Read the file and remove the reference
-                    with open(src, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    # Remove the exact reference, case-insensitive
-                    updated_content = re.sub(r'\[\[' + re.escape(exact_ref) + r'\]\]', '', content, flags=re.IGNORECASE)
-                    with open(src, 'w', encoding='utf-8') as f:
-                        f.write(updated_content)
+                            src = os.path.join(self.directory, arquivo)
+                            backup_path = os.path.join(backup_dir, arquivo)
+                            shutil.copy2(src, backup_path)  # Backup do arquivo
 
-            # Update the Tree Widget and history
+                            # Ler o arquivo e remover a referência na linha específica
+                            with open(src, 'r', encoding='utf-8') as f:
+                                lines = f.readlines()
+
+                            if 0 < linha <= len(lines):
+                                # Remover a referência da linha
+                                pattern = re.escape(exact_text)
+                                lines[linha - 1] = re.sub(r'\[\[' + pattern + r'\]\]', '', lines[linha - 1], flags=re.IGNORECASE)
+                                with open(src, 'w', encoding='utf-8') as f:
+                                    f.writelines(lines)
+
+            # Atualizar o Tree Widget e o histórico
             for ref in selected_refs:
                 self.action_history.append({
                     'action': 'delete',
@@ -511,7 +493,7 @@ class MarkdownReferenceManager(QWidget):
                 })
                 self.remove_reference_from_tree(ref)
 
-            # Provide feedback
+            # Fornecer feedback
             feedback_msg = self.translations['feedback_deleted'].format(files=", ".join(selected_refs))
             self.feedback.setText(feedback_msg)
 
@@ -524,16 +506,21 @@ class MarkdownReferenceManager(QWidget):
 
     def rewrite_reference(self):
         """
-        Rewrite selected references across all occurrences in all files.
+        Reescreve as referências selecionadas em todas as ocorrências nos arquivos.
         """
-        selected_refs = []
-        for i in range(self.tree.topLevelItemCount()):
-            ref_item = self.tree.topLevelItem(i)
-            # Check if the reference or any of its occurrences are checked
-            if ref_item.checkState(0) == Qt.Checked or ref_item.checkState(1) == Qt.Checked:
-                selected_refs.append(ref_item.text(1))
+        selected_occurrences = []
+        common_words = set()
 
-        if not selected_refs:
+        for i in range(self.tree.topLevelItemCount()):
+            group_item = self.tree.topLevelItem(i)
+            common_word = group_item.text(1)
+            for j in range(group_item.childCount()):
+                occurrence_item = group_item.child(j)
+                if occurrence_item.checkState(4) == Qt.Checked:
+                    selected_occurrences.append((group_item, occurrence_item))
+                    common_words.add(common_word)
+
+        if not selected_occurrences:
             QMessageBox.warning(
                 self,
                 "Warning" if self.translations['language_english'] == "English" else "Aviso",
@@ -541,72 +528,78 @@ class MarkdownReferenceManager(QWidget):
             )
             return
 
-        for ref in selected_refs:
-            # Prompt user to input new reference name
-            suggested_names = [ref]  # Current reference as the default suggestion
-            dialog = NameSuggestionDialog(suggested_names, self.translations, self)
-            if dialog.exec_() == QDialog.Accepted:
-                new_ref = dialog.get_new_name()
-                if not new_ref:
-                    QMessageBox.warning(
-                        self,
-                        "Warning" if self.translations['language_english'] == "English" else "Aviso",
-                        self.translations['error_no_files_selected'] if self.translations['language_english'] == "English" else "Nome da referência inválido."
-                    )
-                    continue
+        if len(common_words) == 1:
+            # Todas as ocorrências selecionadas compartilham a mesma palavra comum
+            suggested_name = common_words.pop()
+        else:
+            # Ocorrências selecionadas possuem palavras comuns diferentes
+            suggested_name = ""
 
-                # Backup original files
-                backup_dir = os.path.join(self.directory, ".backup_reference_manager")
-                os.makedirs(backup_dir, exist_ok=True)
+        # Dialog para inserir o novo nome da referência
+        dialog = NameSuggestionDialog([suggested_name] if suggested_name else [], self.translations, self)
+        if dialog.exec_() == QDialog.Accepted:
+            new_ref = dialog.get_new_name()
+            if not new_ref:
+                QMessageBox.warning(
+                    self,
+                    "Warning" if self.translations['language_english'] == "English" else "Aviso",
+                    self.translations['error_no_files_selected_merge']
+                )
+                return
 
-                try:
-                    occurrences = self.filtered_references[ref]
-                    for exact_ref, file, line_num in occurrences:
-                        src = os.path.join(self.directory, file)
-                        backup_path = os.path.join(backup_dir, file)
-                        shutil.copy2(src, backup_path)  # Backup the file
+            # Fazer backup dos arquivos originais
+            backup_dir = os.path.join(self.directory, ".backup_reference_manager")
+            os.makedirs(backup_dir, exist_ok=True)
 
-                        # Read the file and replace the exact reference
-                        with open(src, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        # Replace the exact reference, case-insensitive
-                        updated_content = re.sub(r'\[\[' + re.escape(exact_ref) + r'\]\]', f'[[{new_ref}]]', content, flags=re.IGNORECASE)
+            try:
+                for group_item, occurrence_item in selected_occurrences:
+                    arquivo = occurrence_item.text(2)
+                    linha = int(occurrence_item.text(3))
+                    exact_text = occurrence_item.text(4)
+
+                    src = os.path.join(self.directory, arquivo)
+                    backup_path = os.path.join(backup_dir, arquivo)
+                    shutil.copy2(src, backup_path)  # Backup do arquivo
+
+                    # Ler o arquivo e substituir a referência na linha específica
+                    with open(src, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+
+                    if 0 < linha <= len(lines):
+                        # Substituir a referência na linha
+                        pattern = re.escape(exact_text)
+                        replacement = f'[[{new_ref}]]'
+                        lines[linha - 1] = re.sub(r'\[\[' + pattern + r'\]\]', replacement, lines[linha - 1], flags=re.IGNORECASE)
                         with open(src, 'w', encoding='utf-8') as f:
-                            f.write(updated_content)
+                            f.writelines(lines)
 
-                    # Update the Tree Widget and history
-                    self.action_history.append({
-                        'action': 'rewrite',
-                        'old_reference': ref,
-                        'new_reference': new_ref,
-                        'backup_dir': backup_dir
-                    })
-                    self.update_reference_in_tree(ref, new_ref)
+                    # Atualizar o Tree Widget com o novo texto
+                    occurrence_item.setText(4, new_ref)
+                    # Desmarcar automaticamente o checkbox após reescrever
+                    occurrence_item.setCheckState(4, Qt.Unchecked)
 
-                    # Provide feedback
-                    feedback_msg = self.translations['feedback_merged'].format(filename=new_ref)
-                    self.feedback.setText(feedback_msg)
+                # Atualizar o histórico de ações
+                self.action_history.append({
+                    'action': 'rewrite',
+                    'old_references': [item[1].text(4) for item in selected_occurrences],
+                    'new_reference': new_ref,
+                    'backup_dir': backup_dir
+                })
 
-                except Exception as e:
-                    QMessageBox.critical(
-                        self,
-                        "Error" if self.translations['language_english'] == "English" else "Erro",
-                        self.translations['error_merge_failed'].format(error=str(e))
-                    )
+                # Fornecer feedback
+                feedback_msg = self.translations['feedback_merged'].format(filename=new_ref)
+                self.feedback.setText(feedback_msg)
 
-    def save_changes(self):
-        """
-        Save all changes made to the files.
-        """
-        QMessageBox.information(
-            self,
-            "Information" if self.translations['language_english'] == "English" else "Informação",
-            self.translations['feedback_merged']
-        )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Error" if self.translations['language_english'] == "English" else "Erro",
+                    self.translations['error_merge_failed'].format(error=str(e))
+                )
 
     def undo_action(self):
         """
-        Undo the last action performed (delete or rewrite).
+        Desfaz a última ação realizada (apagar ou reescrever).
         """
         if not self.action_history:
             QMessageBox.information(
@@ -622,45 +615,45 @@ class MarkdownReferenceManager(QWidget):
             if last_action['action'] == 'delete':
                 ref = last_action['reference']
                 backup_dir = last_action['backup_dir']
-                # Restore references from backup
+                # Restaurar referências a partir do backup
                 for file in os.listdir(backup_dir):
                     src = os.path.join(backup_dir, file)
                     dest = os.path.join(self.directory, file)
                     shutil.copy2(src, dest)
 
-                # Remove the backup directory if empty
+                # Remover o diretório de backup se estiver vazio
                 if not os.listdir(backup_dir):
                     os.rmdir(backup_dir)
 
-                # Reload and analyze files
+                # Recarregar e analisar arquivos
                 self.tree.clear()
                 self.load_and_analyze_files()
 
-                # Provide feedback
+                # Fornecer feedback
                 action_text = "Delete" if self.translations['language_english'] == "English" else "Apagar"
                 feedback_msg = self.translations['feedback_undone'].format(action=action_text)
                 self.feedback.setText(feedback_msg)
 
             elif last_action['action'] == 'rewrite':
-                old_ref = last_action['old_reference']
+                old_refs = last_action['old_references']
                 new_ref = last_action['new_reference']
                 backup_dir = last_action['backup_dir']
 
-                # Restore original references from backup
+                # Restaurar referências originais a partir do backup
                 for file in os.listdir(backup_dir):
                     src = os.path.join(backup_dir, file)
                     dest = os.path.join(self.directory, file)
                     shutil.copy2(src, dest)
 
-                # Remove the backup directory if empty
+                # Remover o diretório de backup se estiver vazio
                 if not os.listdir(backup_dir):
                     os.rmdir(backup_dir)
 
-                # Reload and analyze files
+                # Recarregar e analisar arquivos
                 self.tree.clear()
                 self.load_and_analyze_files()
 
-                # Provide feedback
+                # Fornecer feedback
                 action_text = "Rewrite" if self.translations['language_english'] == "English" else "Reescrever"
                 feedback_msg = self.translations['feedback_undone'].format(action=action_text)
                 self.feedback.setText(feedback_msg)
@@ -682,27 +675,27 @@ class MarkdownReferenceManager(QWidget):
 
     def remove_reference_from_tree(self, ref):
         """
-        Remove a reference from the Tree Widget.
+        Remove uma referência da Tree Widget.
         """
         for i in range(self.tree.topLevelItemCount()):
-            ref_item = self.tree.topLevelItem(i)
-            if ref_item.text(1) == ref:
+            group_item = self.tree.topLevelItem(i)
+            if group_item.text(1) == ref:
                 self.tree.takeTopLevelItem(i)
                 break
 
     def update_reference_in_tree(self, old_ref, new_ref):
         """
-        Update a reference name in the Tree Widget after rewriting.
+        Atualiza o nome de uma referência na Tree Widget após reescrever.
         """
         for i in range(self.tree.topLevelItemCount()):
-            ref_item = self.tree.topLevelItem(i)
-            if ref_item.text(1) == old_ref:
-                ref_item.setText(1, new_ref)
+            group_item = self.tree.topLevelItem(i)
+            if group_item.text(1) == old_ref:
+                group_item.setText(1, new_ref)
                 break
 
     def closeEvent(self, event):
         """
-        Override the close event to ensure all changes are saved or handled.
+        Sobrescreve o evento de fechamento para garantir que todas as alterações sejam salvas ou tratadas.
         """
         if self.translations['language_english'] == "English":
             title = self.translations['close_confirmation_title']
@@ -728,27 +721,29 @@ class MarkdownReferenceManager(QWidget):
         else:
             event.ignore()
 
+
 def main():
     app = QApplication(sys.argv)
 
-    # Temporary translations for the language selection dialog (default to English)
+    # Traduções temporárias para o diálogo de seleção de idioma (padrão para inglês)
     temp_translations = LANGUAGES['english']
 
-    # Create and display the language selection dialog
+    # Criar e exibir o diálogo de seleção de idioma
     selection_dialog = LanguageSelectionDialog(temp_translations, None)
     if selection_dialog.exec_() == QDialog.Accepted:
         selected_language = selection_dialog.get_selected_language()
     else:
-        # If the user cancels, exit the application
+        # Se o usuário cancelar, sair do aplicativo
         sys.exit()
 
-    # Get the translations based on the selected language
+    # Obter as traduções com base no idioma selecionado
     translations = LANGUAGES.get(selected_language, LANGUAGES['english'])
 
-    # Initialize the main application with the selected translations
+    # Inicializar o aplicativo principal com as traduções selecionadas
     manager = MarkdownReferenceManager(translations)
     manager.show()
     sys.exit(app.exec_())
+
 
 if __name__ == '__main__':
     main()
