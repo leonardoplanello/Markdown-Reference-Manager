@@ -231,12 +231,16 @@ class MarkdownReferenceManager(QWidget):
         self.tree.setColumnWidth(3, 100)   # Linha
         self.tree.setColumnWidth(4, 700)   # Texto Exato
         self.tree.setStyleSheet("background-color: #2b2b2b; color: white;")
-        self.tree.setSelectionMode(QTreeWidget.NoSelection)
+        self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)  # Permitir seleção múltipla
+        self.tree.setSelectionBehavior(QTreeWidget.SelectRows)     # Seleção por linha
         self.tree.setAlternatingRowColors(True)
         self.tree.setRootIsDecorated(False)  # Sem setas de expansão
 
         # Ajustar cabeçalhos para ajustar ao conteúdo
         self.tree.header().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        # Remover conexão de seleção personalizada
+        # self.tree.itemClicked.connect(self.handle_item_clicked)  # Removido para usar seleção nativa
 
         layout.addWidget(self.tree)
 
@@ -425,7 +429,8 @@ class MarkdownReferenceManager(QWidget):
             for oc in ocorrencias:
                 arquivo, linha, exact_text = oc
                 occurrence_item = QTreeWidgetItem(["", "", arquivo, str(linha), exact_text])
-                occurrence_item.setCheckState(4, Qt.Unchecked)  # Permitir seleção
+                # Remover checkboxes para utilizar seleção múltipla padrão
+                occurrence_item.setFlags(occurrence_item.flags() | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 group_item.addChild(occurrence_item)
 
             self.tree.addTopLevelItem(group_item)
@@ -436,15 +441,9 @@ class MarkdownReferenceManager(QWidget):
         """
         Apaga as referências selecionadas de todas as ocorrências nos arquivos.
         """
-        selected_refs = []
-        for i in range(self.tree.topLevelItemCount()):
-            group_item = self.tree.topLevelItem(i)
-            # Verifica se o grupo está selecionado
-            if group_item.checkState(0) == Qt.Checked or group_item.checkState(1) == Qt.Checked:
-                ref = group_item.text(1)
-                selected_refs.append(ref)
+        selected_items = self.tree.selectedItems()
 
-        if not selected_refs:
+        if not selected_items:
             QMessageBox.warning(
                 self,
                 "Warning" if self.translations['language_english'] == "English" else "Aviso",
@@ -452,12 +451,18 @@ class MarkdownReferenceManager(QWidget):
             )
             return
 
+        # Agrupar referências selecionadas por "Common Word" para deletar em lote
+        common_words = set()
+        for item in selected_items:
+            common_word = item.parent().text(1)
+            common_words.add(common_word)
+
         # Fazer backup dos arquivos originais
         backup_dir = os.path.join(self.directory, ".backup_reference_manager")
         os.makedirs(backup_dir, exist_ok=True)
 
         try:
-            for ref in selected_refs:
+            for ref in common_words:
                 # Encontrar todas as ocorrências desta referência
                 for i in range(self.tree.topLevelItemCount()):
                     group_item = self.tree.topLevelItem(i)
@@ -485,7 +490,7 @@ class MarkdownReferenceManager(QWidget):
                                     f.writelines(lines)
 
             # Atualizar o Tree Widget e o histórico
-            for ref in selected_refs:
+            for ref in common_words:
                 self.action_history.append({
                     'action': 'delete',
                     'reference': ref,
@@ -494,7 +499,7 @@ class MarkdownReferenceManager(QWidget):
                 self.remove_reference_from_tree(ref)
 
             # Fornecer feedback
-            feedback_msg = self.translations['feedback_deleted'].format(files=", ".join(selected_refs))
+            feedback_msg = self.translations['feedback_deleted'].format(files=", ".join(common_words))
             self.feedback.setText(feedback_msg)
 
         except Exception as e:
@@ -508,19 +513,8 @@ class MarkdownReferenceManager(QWidget):
         """
         Reescreve as referências selecionadas em todas as ocorrências nos arquivos.
         """
-        selected_occurrences = []
-        common_words = set()
-
-        for i in range(self.tree.topLevelItemCount()):
-            group_item = self.tree.topLevelItem(i)
-            common_word = group_item.text(1)
-            for j in range(group_item.childCount()):
-                occurrence_item = group_item.child(j)
-                if occurrence_item.checkState(4) == Qt.Checked:
-                    selected_occurrences.append((group_item, occurrence_item))
-                    common_words.add(common_word)
-
-        if not selected_occurrences:
+        selected_items = self.tree.selectedItems()
+        if not selected_items:
             QMessageBox.warning(
                 self,
                 "Warning" if self.translations['language_english'] == "English" else "Aviso",
@@ -528,22 +522,35 @@ class MarkdownReferenceManager(QWidget):
             )
             return
 
-        if len(common_words) == 1:
-            # Todas as ocorrências selecionadas compartilham a mesma palavra comum
-            suggested_name = common_words.pop()
-        else:
-            # Ocorrências selecionadas possuem palavras comuns diferentes
-            suggested_name = ""
+        # Agrupar referências selecionadas por "Common Word"
+        common_words = set()
+        for item in selected_items:
+            common_word = item.parent().text(1)
+            common_words.add(common_word)
+
+        if len(common_words) > 1:
+            QMessageBox.warning(
+                self,
+                "Warning" if self.translations['language_english'] == "English" else "Aviso",
+                "Selected references have different common words. Please select references with the same common word."
+                if self.translations['language_english'] == "English" else
+                "As referências selecionadas possuem palavras comuns diferentes. Por favor, selecione referências com a mesma palavra comum."
+            )
+            return
+
+        common_word = common_words.pop()
+        # Obter todas as ocorrências selecionadas
+        selected_occurrences = [item for item in selected_items]
 
         # Dialog para inserir o novo nome da referência
-        dialog = NameSuggestionDialog([suggested_name] if suggested_name else [], self.translations, self)
+        dialog = NameSuggestionDialog([common_word], self.translations, self)
         if dialog.exec_() == QDialog.Accepted:
             new_ref = dialog.get_new_name()
             if not new_ref:
                 QMessageBox.warning(
                     self,
                     "Warning" if self.translations['language_english'] == "English" else "Aviso",
-                    self.translations['error_no_files_selected_merge']
+                    self.translations['warning_no_files_selected_merge']
                 )
                 return
 
@@ -552,7 +559,7 @@ class MarkdownReferenceManager(QWidget):
             os.makedirs(backup_dir, exist_ok=True)
 
             try:
-                for group_item, occurrence_item in selected_occurrences:
+                for occurrence_item in selected_occurrences:
                     arquivo = occurrence_item.text(2)
                     linha = int(occurrence_item.text(3))
                     exact_text = occurrence_item.text(4)
@@ -575,13 +582,13 @@ class MarkdownReferenceManager(QWidget):
 
                     # Atualizar o Tree Widget com o novo texto
                     occurrence_item.setText(4, new_ref)
-                    # Desmarcar automaticamente o checkbox após reescrever
-                    occurrence_item.setCheckState(4, Qt.Unchecked)
+                    # Desmarcar automaticamente a seleção após reescrever
+                    occurrence_item.setSelected(False)
 
                 # Atualizar o histórico de ações
                 self.action_history.append({
                     'action': 'rewrite',
-                    'old_references': [item[1].text(4) for item in selected_occurrences],
+                    'old_references': [item.text(4) for item in selected_occurrences],
                     'new_reference': new_ref,
                     'backup_dir': backup_dir
                 })
@@ -589,6 +596,9 @@ class MarkdownReferenceManager(QWidget):
                 # Fornecer feedback
                 feedback_msg = self.translations['feedback_merged'].format(filename=new_ref)
                 self.feedback.setText(feedback_msg)
+
+                # Desmarcar as seleções
+                self.tree.clearSelection()
 
             except Exception as e:
                 QMessageBox.critical(
